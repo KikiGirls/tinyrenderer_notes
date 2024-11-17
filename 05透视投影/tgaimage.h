@@ -57,6 +57,10 @@ struct TGAColor {
 		}
 		return *this;
 	}
+
+	TGAColor  operator*(float t_intensity) const {
+		return TGAColor(r * t_intensity, g*t_intensity, b*t_intensity);
+	}
 };
 
 

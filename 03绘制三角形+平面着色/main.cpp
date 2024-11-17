@@ -1,31 +1,30 @@
 #include <vector>
 #include <cmath>
 #include "tgaimage.h"
-#include "model.h"
 #include "geometry.h"
+#include "model.h"
 
 const TGAColor white = TGAColor(255, 255, 255, 255);
-const TGAColor red   = TGAColor(255, 0,   0,   255);
-const TGAColor green = TGAColor(0,   255, 0,   255);
+const TGAColor red = TGAColor(255, 0, 0, 255);
+const TGAColor green = TGAColor(0, 255, 0, 255);
 Model *model = NULL;
-const int width  = 800;
+const int width = 800;
 const int height = 800;
 
-//»­ÏßËã·¨(×ø±ê1£¬×ø±ê2£¬tgaÖ¸Õë£¬ÑÕÉ«)
 void line(Vec2i p0, Vec2i p1, TGAImage &image, TGAColor color) {
     bool steep = false;
-    if (std::abs(p0.x-p1.x)<std::abs(p0.y-p1.y)) {
+    if (std::abs(p0.x - p1.x) < std::abs(p0.y - p1.y)) {
         std::swap(p0.x, p0.y);
         std::swap(p1.x, p1.y);
         steep = true;
     }
-    if (p0.x>p1.x) {
+    if (p0.x > p1.x) {
         std::swap(p0, p1);
     }
 
-    for (int x=p0.x; x<=p1.x; x++) {
-        float t = (x-p0.x)/(float)(p1.x-p0.x);
-        int y = p0.y*(1.-t) + p1.y*t;
+    for (int x = p0.x; x <= p1.x; x++) {
+        float t = (x - p0.x) / (float) (p1.x - p0.x);
+        int y = p0.y * (1. - t) + p1.y * t;
         if (steep) {
             image.set(y, x, color);
         } else {
@@ -34,72 +33,138 @@ void line(Vec2i p0, Vec2i p1, TGAImage &image, TGAColor color) {
     }
 }
 
-//»æÖÆÈı½ÇĞÎ(×ø±ê1£¬×ø±ê2£¬×ø±ê3£¬tgaÖ¸Õë£¬ÑÕÉ«)
+void findbox(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage &image, std::vector<Vec2i> &box) {
+    // ä¸´æ—¶å˜é‡
+    Vec2i box_min(std::min({t0.x, t1.x, t2.x}), std::min({t0.y, t1.y, t2.y}));
+    Vec2i box_max(std::max({t0.x, t1.x, t2.x}), std::max({t0.y, t1.y, t2.y}));
+
+    // é™åˆ¶åœ¨å›¾åƒèŒƒå›´å†…
+    box_min.x = std::max(0, box_min.x);
+    box_min.y = std::max(0, box_min.y);
+    box_max.x = std::min(image.get_width() - 1, box_max.x);
+    box_max.y = std::min(image.get_height() - 1, box_max.y);
+
+    box = {box_min, box_max};
+}
+
+bool inTriangle(Vec2i A, Vec2i B, Vec2i C, int x, int y) {
+    auto cross = [](Vec2i a, Vec2i b) {
+        return a.x * b.y - a.y * b.x;
+    };
+    Vec2i p(x, y);
+
+    Vec2i AB = B - A,BC = C - B, CA = A - C;
+    Vec2i A2p = p - A, B2p = p - B, C2p = p - C;
+
+    return (cross(AB, A2p) >= 0 && cross(BC, B2p) >= 0 && cross(CA, C2p) >= 0) ||
+           (cross(AB, A2p) <= 0 && cross(BC, B2p) <= 0 && cross(CA, C2p) <= 0);
+}
+
+
 void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage &image, TGAColor color) {
-    //Èı½ÇĞÎÃæ»ıÎª0
-    if (t0.y==t1.y && t0.y==t2.y) return;
-    //¸ù¾İyµÄ´óĞ¡¶Ô×ø±ê½øĞĞÅÅĞò
-    if (t0.y>t1.y) std::swap(t0, t1);
-    if (t0.y>t2.y) std::swap(t0, t2);
-    if (t1.y>t2.y) std::swap(t1, t2);
-    int total_height = t2.y-t0.y;
-    //ÒÔ¸ß¶È²î×÷ÎªÑ­»·¿ØÖÆ±äÁ¿£¬´ËÊ±²»ĞèÒª¿¼ÂÇĞ±ÂÊ£¬ÒòÎª×ÅÉ«ÍêºóÃ¿ĞĞ¶¼»á±»Ìî³ä
-    for (int i=0; i<total_height; i++) {
-        //¸ù¾İt1½«Èı½ÇĞÎ·Ö¸îÎªÉÏÏÂÁ½²¿·Ö
-        bool second_half = i>t1.y-t0.y || t1.y==t0.y;
-        int segment_height = second_half ? t2.y-t1.y : t1.y-t0.y;
-        float alpha = (float)i/total_height;
-        float beta  = (float)(i-(second_half ? t1.y-t0.y : 0))/segment_height; 
-        //¼ÆËãA,BÁ½µãµÄ×ø±ê
-        Vec2i A =               t0 + (t2-t0)*alpha;
-        Vec2i B = second_half ? t1 + (t2-t1)*beta : t0 + (t1-t0)*beta;
-        if (A.x>B.x) std::swap(A, B);
-        //¸ù¾İA,BºÍµ±Ç°¸ß¶È¶Ôtga×ÅÉ«
-        for (int j=A.x; j<=B.x; j++) {
-            image.set(j, t0.y+i, color);
+    // ç”»å‡ºè½®å»“
+    // line(t0, t1, image, color);
+    // line(t1, t2, image, color);
+    // // line(t2, t0, image, color);
+    //
+    // // ç¬¬ä¸€ç§å¡«å……ä¸‰è§’å½¢çš„æ–¹æ³•
+    // // ä½¿ç”¨çº¿æ‰«æå¡«å……ä¸‰è§’å½¢
+    // // å°±æ˜¯ä»é¡¶éƒ¨ä¸€æ¡ä¸€æ¡çš„æ‰«æä¸‹æ¥
+    // if (t0.y == t1.y && t1.y == t2.y) {
+    //     return;
+    // }
+    // if (t0.y < t1.y) std::swap(t0, t1);
+    // if (t0.y < t2.y) std::swap(t2, t0);
+    // if (t2.y > t1.y) std::swap(t2, t1);
+    //
+    // // å¯¹ä¸‰è§’é¡¶ç‚¹çš„é«˜åº¦è¿›è¡Œæ’åº
+    // // å¯¹ä¸ŠåŠéƒ¨åˆ†è¿›è¡Œéå†
+    //
+    // int total_height = t0.y - t2.y;
+    //
+    // for (int i = 0; i < total_height; i++) {
+    //     bool islow = i > t0.y - t1.y || t0.y == t1.y;
+    //     float a = float(i) / float(total_height); //æ¯”ä¾‹ç³»æ•°
+    //     Vec2i A = t0 + (t2 - t0) * a;
+    //
+    //     float b = islow ? float(total_height - i) / (t1.y - t2.y) : float(i) / (t0.y - t1.y);
+    //     Vec2i B = islow ? t2 + (t1 - t2) * b : t0 + (t1 - t0) * b;
+    //
+    //     if (A.x > B.x) std::swap(A, B);
+    //     // line(A, B, image, color);
+    //     // è¿™æ ·å†™ä¼šå¯¼è‡´ç²¾åº¦é—®é¢˜ç„¶åä¼šæœ‰æ´
+    //     for (int j = A.x; j <= B.x; j++) {
+    //         image.set(j, t0.y - i, color);
+    //     }
+    // }
+
+    // ç¬¬äºŒç§å¡«å……ä¸‰è§’å½¢çš„æ–¹æ³•
+    // é‡å¿ƒæ³•
+
+    std::vector<Vec2i> box;
+    findbox(t0, t1, t2, image, box);
+    for (int x = box[0].x; x <= box[1].x; x++) {
+        for (int y = box[0].y; y <= box[1].y; y++) {
+            if (inTriangle(t0, t1, t2, x, y)) {
+                image.set(x, y, color);
+            }
         }
     }
 }
 
-int main(int argc, char** argv) {
-    //¶ÁÈ¡modelÎÄ¼ş
-    if (2==argc) {
+
+Vec3f triangleNormal(Vec3f *triangle) {
+    // è·å–ä¸‰è§’å½¢çš„ä¸‰ä¸ªé¡¶ç‚¹
+    Vec3f v0 = triangle[0];
+    Vec3f v1 = triangle[1];
+    Vec3f v2 = triangle[2];
+
+    // è®¡ç®—ä¸¤ä¸ªè¾¹å‘é‡
+    Vec3f edge1 = v2 - v0;
+    Vec3f edge2 = v1 - v0;
+
+    // è®¡ç®—æ³•å‘é‡ï¼šè¾¹å‘é‡çš„å‰ç§¯
+    Vec3f normal = edge1 ^ edge2;
+
+    // ç¡®ä¿æ³•å‘é‡å½’ä¸€åŒ–ï¼ˆå¦‚æœéœ€è¦å•ä½æ³•å‘é‡ï¼‰
+    normal.normalize();
+
+    return normal; // è¿”å›å³å€¼å¼•ç”¨
+}
+
+int main(int argc, char **argv) {
+    //è¯»å–modelæ–‡ä»¶
+    if (2 == argc) {
         model = new Model(argv[1]);
     } else {
         model = new Model("obj/african_head.obj");
     }
-    //¹¹Ôìtgaimage
     TGAImage image(width, height, TGAImage::RGB);
-    //¸ßÂåµÂ×ÅÉ«
-    //Ö¸¶¨¹âÕÕ·½Ïò
-    Vec3f light_dir(0,0,-1);
-    //Ä£ĞÍµÄÃæ×÷ÎªÑ­»·¿ØÖÆ±äÁ¿
-    for (int i=0; i<model->nfaces(); i++) {
-        //faceÊÇÒ»¸öÊı×é£¬ÓÃÓÚ´æ´¢Ò»¸öÃæµÄÈı¸ö¶¥µã
+
+    Vec3f light_dir = Vec3f(0, 0, -1);
+
+    for (int i = 0; i < model->nfaces(); i++) {
         std::vector<int> face = model->face(i);
         Vec2i screen_coords[3];
         Vec3f world_coords[3];
-        for (int j=0; j<3; j++) {
+        Vec3f n;
+        for (int j = 0; j < 3; j++) {
             Vec3f v = model->vert(face[j]);
-            //ÆÁÄ»×ø±ê    (-1,-1)Ó³ÉäÎª(0,0)  £¨1,1£©Ó³ÉäÎª(width,height)
-            screen_coords[j] = Vec2i((v.x+1.)*width/2., (v.y+1.)*height/2.);
-            //ÊÀ½ç×ø±ê    ¼´Ä£ĞÍ×ø±ê
-            world_coords[j]  = v;
+            screen_coords[j] = Vec2i((v.x + 1.) * width / 2., (v.y + 1.) * height / 2.);
+            world_coords[j] = v;
         }
-        //ÓÃÊÀ½ç×ø±ê¼ÆËã·¨ÏòÁ¿
-        Vec3f n = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]);
-        n.normalize();
-        //Ç¿¶È=·¨ÏòÁ¿*¹âÕÕ·½Ïò   ¼´·¨ÏòÁ¿ºÍ¹âÕÕ·½ÏòÖØºÏÊ±£¬ÁÁ¶È×î¸ß
-        float intensity = n*light_dir;
-        //Ç¿¶ÈĞ¡ÓÚ0£¬ËµÃ÷Æ½Ãæ³¯ÏòÎªÄÚ  ¼´±³Ãæ²Ã¼ô
-        if (intensity>0) {
-            triangle(screen_coords[0], screen_coords[1], screen_coords[2], image, TGAColor(intensity*255, intensity*255, intensity*255, 255));
+
+        n = triangleNormal(world_coords);
+
+        float intensity = n * light_dir;
+        if (intensity > 0) {//å¦‚æœå°äº0å°±çœ‹ä¸è§ï¼Œä»£è¡¨å…‰çº¿åœ¨ä¸‰è§’å½¢çš„èƒŒé¢ã€‚
+            TGAColor color = TGAColor(intensity * 255, intensity * 255, intensity * 255, 255);
+            triangle(screen_coords[0], screen_coords[1], screen_coords[2], image, color);
         }
     }
 
+
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");
-    delete model;
     return 0;
 }
-

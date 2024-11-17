@@ -1,35 +1,30 @@
 #include <vector>
 #include <cmath>
-#include <cstdlib>
-#include <limits>
 #include "tgaimage.h"
-#include "model.h"
 #include "geometry.h"
-#include <algorithm>
+#include "model.h"
 
-//¶¨Òå²ÎÊı
 const TGAColor white = TGAColor(255, 255, 255, 255);
-const TGAColor red   = TGAColor(255, 0,   0,   255);
-Model *model = NULL;
-const int width  = 800;
+const TGAColor red = TGAColor(255, 0, 0, 255);
+const TGAColor green = TGAColor(0, 255, 0, 255);
+Model *model = nullptr;
+const int width = 800;
 const int height = 800;
 
-//»­ÏßËã·¨
-void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
+void line(Vec2i p0, Vec2i p1, TGAImage &image, TGAColor color) {
     bool steep = false;
-    if (std::abs(x0-x1)<std::abs(y0-y1)) {
-        std::swap(x0, y0);
-        std::swap(x1, y1);
+    if (std::abs(p0.x - p1.x) < std::abs(p0.y - p1.y)) {
+        std::swap(p0.x, p0.y);
+        std::swap(p1.x, p1.y);
         steep = true;
     }
-    if (x0>x1) {
-        std::swap(x0, x1);
-        std::swap(y0, y1);
+    if (p0.x > p1.x) {
+        std::swap(p0, p1);
     }
 
-    for (int x=x0; x<=x1; x++) {
-        float t = (x-x0)/(float)(x1-x0);
-        int y = y0*(1.-t) + y1*t;
+    for (int x = p0.x; x <= p1.x; x++) {
+        float t = (x - p0.x) / (float) (p1.x - p0.x);
+        int y = p0.y * (1. - t) + p1.y * t;
         if (steep) {
             image.set(y, x, color);
         } else {
@@ -38,102 +33,200 @@ void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
     }
 }
 
-//¼ÆËãÖÊĞÄ×ø±ê
-Vec3f barycentric(Vec3f A, Vec3f B, Vec3f C, Vec3f P) {
-    Vec3f s[2];
-    //¼ÆËã[AB,AC,PA]µÄxºÍy·ÖÁ¿
-    for (int i=2; i--; ) {
-        s[i][0] = C[i]-A[i];
-        s[i][1] = B[i]-A[i];
-        s[i][2] = A[i]-P[i];
-    }
-    //[u,v,1]ºÍ[AB,AC,PA]¶ÔÓ¦µÄxºÍyÏòÁ¿¶¼´¹Ö±£¬ËùÒÔ²æ³Ë
-    Vec3f u = cross(s[0], s[1]);
-    //Èıµã¹²ÏßÊ±£¬»áµ¼ÖÂu[2]Îª0£¬´ËÊ±·µ»Ø(-1,1,1)
-    if (std::abs(u[2])>1e-2)
-        //Èô1-u-v£¬u£¬vÈ«Îª´óÓÚ0µÄÊı£¬±íÊ¾µãÔÚÈı½ÇĞÎÄÚ²¿
-        return Vec3f(1.f-(u.x+u.y)/u.z, u.y/u.z, u.x/u.z);
-    return Vec3f(-1,1,1);
+void findbox(Vec3f *t_screen_coords, TGAImage &image, std::vector<Vec2i> &box) {
+    // ä¸´æ—¶å˜é‡
+    Vec2i box_min(std::min({t_screen_coords[0].x, t_screen_coords[1].x, t_screen_coords[2].x}),
+                  std::min({t_screen_coords[0].y, t_screen_coords[1].y, t_screen_coords[2].y}));
+    Vec2i box_max(std::max({t_screen_coords[0].x, t_screen_coords[1].x, t_screen_coords[2].x}),
+                  std::max({t_screen_coords[0].y, t_screen_coords[1].y, t_screen_coords[2].y}));
+
+    // é™åˆ¶åœ¨å›¾åƒèŒƒå›´å†…
+    box_min.x = std::max(0, box_min.x);
+    box_min.y = std::max(0, box_min.y);
+    box_max.x = std::min(image.get_width() - 1, box_max.x);
+    box_max.y = std::min(image.get_height() - 1, box_max.y);
+
+    box = {box_min, box_max};
 }
 
-//»æÖÆÈı½ÇĞÎ(×ø±êÊı×é£¬zbufferÖ¸Õë£¬tgaÖ¸Õë£¬ÑÕÉ«)
-void triangle(Vec3f *pts, float *zbuffer, TGAImage &image, TGAColor color) {
-    Vec2f bboxmin( std::numeric_limits<float>::max(),  std::numeric_limits<float>::max());
-    Vec2f bboxmax(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
-    Vec2f clamp(image.get_width()-1, image.get_height()-1);
-    //È·¶¨Èı½ÇĞÎµÄ±ß¿ò
-    for (int i=0; i<3; i++) {
-        for (int j=0; j<2; j++) {
-            bboxmin[j] = std::max(0.f,      std::min(bboxmin[j], pts[i][j]));
-            bboxmax[j] = std::min(clamp[j], std::max(bboxmax[j], pts[i][j]));
-        }
+
+std::array<Vec2f, 3> xyz_to_xy(Vec3f *vec) {
+    return {Vec2f(vec[0].x, vec[0].y), Vec2f(vec[1].x, vec[1].y), Vec2f(vec[2].x, vec[2].y)};
+}
+
+void getBarycentricIndex(const std::array<Vec2f, 3> &vecs, Vec2i p, Vec3f &bc_index) {
+    // æå–ä¸‰è§’å½¢çš„ä¸‰ä¸ªé¡¶ç‚¹
+    Vec2f A = vecs[0];
+    Vec2f B = vecs[1];
+    Vec2f C = vecs[2];
+
+    // è®¡ç®—ä¸‰è§’å½¢çš„æœ‰å‘é¢ç§¯ï¼ˆç”¨å‰ç§¯ï¼‰
+    float S_ABC = (B.x - A.x) * (C.y - A.y) - (C.x - A.x) * (B.y - A.y);
+
+    // å¦‚æœé¢ç§¯ä¸º 0ï¼Œè¯´æ˜æ˜¯é€€åŒ–ä¸‰è§’å½¢ï¼Œæ— æ³•è®¡ç®—é‡å¿ƒåæ ‡
+    if (std::abs(S_ABC) < 1e-6) {
+        bc_index = Vec3f(-1, -1, -1); // ç”¨ç‰¹æ®Šå€¼è¡¨ç¤ºæ— æ•ˆ
+        return;
     }
-    Vec3f P;
-    //±éÀú±ß¿òÖĞµÄÃ¿Ò»¸öµã
-    for (P.x=bboxmin.x; P.x<=bboxmax.x; P.x++) {
-        for (P.y=bboxmin.y; P.y<=bboxmax.y; P.y++) {
-            //¼ÆËãÖÊĞÄ
-            if (P.x > 600 && P.y > 500)
-            {
-                P.x += 0.01;
-            }
-            Vec3f bc_screen  = barycentric(pts[0], pts[1], pts[2], P);
-            //ÖÊĞÄ×ø±êÓĞÒ»¸ö¸ºÖµ£¬ËµÃ÷µãÔÚÈı½ÇĞÎÍâ
-            if (bc_screen.x<0 || bc_screen.y<0 || bc_screen.z<0) continue;
-            P.z = 0;
-            //¼ÆËãzbuffer
-            for (int i=0; i<3; i++) P.z += pts[i][2]*bc_screen[i];
-            if (zbuffer[int(P.x+P.y*width)]<P.z) {
-                zbuffer[int(P.x+P.y*width)] = P.z;
-                image.set(P.x, P.y, color);
+
+    // è®¡ç®—å„é‡å¿ƒåæ ‡å¯¹åº”çš„éƒ¨åˆ†é¢ç§¯
+    float S_PBC = (B.x - p.x) * (C.y - p.y) - (C.x - p.x) * (B.y - p.y); // ç‚¹ P å’Œè¾¹ BC çš„å­ä¸‰è§’å½¢é¢ç§¯
+    float S_PCA = (C.x - p.x) * (A.y - p.y) - (A.x - p.x) * (C.y - p.y); // ç‚¹ P å’Œè¾¹ CA çš„å­ä¸‰è§’å½¢é¢ç§¯
+
+    // å½’ä¸€åŒ–ï¼Œå¾—åˆ°é‡å¿ƒåæ ‡
+    bc_index.x = S_PBC / S_ABC; // å¯¹åº”é¡¶ç‚¹ A
+    bc_index.y = S_PCA / S_ABC; // å¯¹åº”é¡¶ç‚¹ B
+    bc_index.z = 1.0f - bc_index.x - bc_index.y; // å¯¹åº”é¡¶ç‚¹ C
+}
+
+bool inTriangle(Vec3f *t_screen_coords, Vec2i p, Vec3f &bc_index) {
+    auto t_screen_coords_xy = xyz_to_xy(t_screen_coords);
+    getBarycentricIndex(t_screen_coords_xy, p, bc_index);
+    const float epsilon = 1e-6;
+    return bc_index[0] >= -epsilon && bc_index[1] >= -epsilon && bc_index[2] >= -epsilon;
+}
+
+
+ void write_triangle(Vec3f *t_screen_coords, std::vector<float> &zBuffer, TGAImage &image, TGAColor color) {
+    // ç”»å‡ºè½®å»“
+    // line(t0, t1, image, color);
+    // line(t1, t2, image, color);
+    // // line(t2, t0, image, color);
+    //
+    // // ç¬¬ä¸€ç§å¡«å……ä¸‰è§’å½¢çš„æ–¹æ³•
+    // // ä½¿ç”¨çº¿æ‰«æå¡«å……ä¸‰è§’å½¢
+    // // å°±æ˜¯ä»é¡¶éƒ¨ä¸€æ¡ä¸€æ¡çš„æ‰«æä¸‹æ¥
+    // if (t0.y == t1.y && t1.y == t2.y) {
+    //     return;
+    // }
+    // if (t0.y < t1.y) std::swap(t0, t1);
+    // if (t0.y < t2.y) std::swap(t2, t0);
+    // if (t2.y > t1.y) std::swap(t2, t1);
+    //
+    // // å¯¹ä¸‰è§’é¡¶ç‚¹çš„é«˜åº¦è¿›è¡Œæ’åº
+    // // å¯¹ä¸ŠåŠéƒ¨åˆ†è¿›è¡Œéå†
+    //
+    // int total_height = t0.y - t2.y;
+    //
+    // for (int i = 0; i < total_height; i++) {
+    //     bool islow = i > t0.y - t1.y || t0.y == t1.y;
+    //     float a = float(i) / float(total_height); //æ¯”ä¾‹ç³»æ•°
+    //     Vec2i A = t0 + (t2 - t0) * a;
+    //
+    //     float b = islow ? float(total_height - i) / (t1.y - t2.y) : float(i) / (t0.y - t1.y);
+    //     Vec2i B = islow ? t2 + (t1 - t2) * b : t0 + (t1 - t0) * b;
+    //
+    //     if (A.x > B.x) std::swap(A, B);
+    //     // line(A, B, image, color);
+    //     // è¿™æ ·å†™ä¼šå¯¼è‡´ç²¾åº¦é—®é¢˜ç„¶åä¼šæœ‰æ´
+    //     for (int j = A.x; j <= B.x; j++) {
+    //         image.set(j, t0.y - i, color);
+    //     }
+    // }
+
+    // ç¬¬äºŒç§å¡«å……ä¸‰è§’å½¢çš„æ–¹æ³•
+    // é‡å¿ƒæ³•
+
+    // std::vector<Vec2i> box;
+    // findbox(t0, t1, t2, image, box);
+    // for (int x = box[0].x; x <= box[1].x; x++) {
+    //     for (int y = box[0].y; y <= box[1].y; y++) {
+    //         if (inTriangle(t0, t1, t2, x, y)) {
+    //             image.set(x, y, color);
+    //         }
+    //     }
+    // }
+
+    // ä½¿ç”¨é‡å¿ƒåæ ‡æ¥æ’å€¼è®¡ç®—zbuffer
+
+    std::vector<Vec2i> box;
+    findbox(t_screen_coords, image, box);
+
+    for (int y = box[0].y; y <= box[1].y; y++) {
+        int row_offset = y * width; // æå‰è®¡ç®—è¡Œåç§»é‡
+        for (int x = box[0].x; x <= box[1].x; x++) {
+            Vec2i p = Vec2i(x, y);
+            Vec3f bc_index;
+
+            // æ£€æŸ¥ç‚¹æ˜¯å¦åœ¨ä¸‰è§’å½¢å†…å¹¶è®¡ç®—é‡å¿ƒåæ ‡
+            if (inTriangle(t_screen_coords, p, bc_index)) {
+                // ä½¿ç”¨é‡å¿ƒåæ ‡æ’å€¼è®¡ç®—æ·±åº¦å€¼
+                float p_z = 0;
+                for (int i = 0; i < 3; i++) {
+                    p_z += t_screen_coords[i].z * bc_index[i];
+                }
+
+                // æ·±åº¦ç¼“å†²åŒºæ£€æŸ¥å¹¶æ›´æ–°
+                int z_index = x + row_offset; // è®¡ç®—ç´¢å¼•
+                if (p_z > zBuffer[z_index]) {
+                    zBuffer[z_index] = p_z; // æ›´æ–°æ·±åº¦å€¼
+                    image.set(x, y, color); // ç»˜åˆ¶åƒç´ 
+                }
             }
         }
     }
 }
 
-//ÊÀ½ç×ø±ê×ªÆÁÄ»×ø±ê
-Vec3f world2screen(Vec3f v) {
+
+Vec3f getTriangleNormal(Vec3f *triangle) {
+    // è·å–ä¸‰è§’å½¢çš„ä¸‰ä¸ªé¡¶ç‚¹
+    Vec3f v0 = triangle[0];
+    Vec3f v1 = triangle[1];
+    Vec3f v2 = triangle[2];
+
+    // è®¡ç®—ä¸¤ä¸ªè¾¹å‘é‡
+    Vec3f edge1 = v2 - v0;
+    Vec3f edge2 = v1 - v0;
+
+    // è®¡ç®—æ³•å‘é‡ï¼šè¾¹å‘é‡çš„å‰ç§¯
+    Vec3f normal = cross(edge1, edge2);
+
+    // ç¡®ä¿æ³•å‘é‡å½’ä¸€åŒ–ï¼ˆå¦‚æœéœ€è¦å•ä½æ³•å‘é‡ï¼‰
+    normal.normalize();
+
+    return normal; // è¿”å›å³å€¼å¼•ç”¨
+}
+
+Vec3f MPV (Vec3f v) {
     return Vec3f(int((v.x+1.)*width/2.+.5), int((v.y+1.)*height/2.+.5), v.z);
 }
 
-int main(int argc, char** argv) {
-    //»ñÈ¡Ä£ĞÍÎÄ¼ş
-    if (2==argc) {
+int main(int argc, char **argv) {
+    //è¯»å–modelæ–‡ä»¶
+    if (2 == argc) {
         model = new Model(argv[1]);
     } else {
         model = new Model("obj/african_head/african_head.obj");
     }
-    //´´½¨zbuffer£¬´óĞ¡Îª»­²¼´óĞ¡
-    float *zbuffer = new float[width*height];
-    //³õÊ¼»¯zbuffer£¬Éè¶¨Ò»¸öºÜĞ¡µÄÖµ
-    for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
     TGAImage image(width, height, TGAImage::RGB);
-    //Éè¶¨¹âÕÕ·½Ïò
-    Vec3f light_dir(0, 0, -1);
-    for (int i=0; i<model->nfaces(); i++) {
-        //ÆÁÄ»×ø±ê£¬ÊÀ½ç×ø±ê
-        Vec3f screen_coords[3];
-        Vec3f world_coords[3];
+    std::vector<float> zBuffer(width * height, -std::numeric_limits<float>::max());
+
+    Vec3f light_dir = Vec3f(0, 0, -1);
+
+    for (int i = 0; i < model->nfaces(); i++) {
         std::vector<int> face = model->face(i);
+        Vec3f t_screen_coords[3];
+        Vec3f t_world_coords[3];
+        Vec3f t_normal;
         for (int j = 0; j < 3; j++) {
             Vec3f v = model->vert(face[j]);
-            //ÊÀ½ç×ø±ê×ªÆÁÄ»×ø±ê
-            screen_coords[j] = world2screen(model->vert(face[j]));
-            world_coords[j] = v;
+            t_screen_coords[j] = MPV(v);
+            t_world_coords[j] = v;
         }
-        //ÊÀ½ç×ø±êÓÃÓÚ¼ÆËã·¨ÏòÁ¿
-        Vec3f n = cross((world_coords[2] - world_coords[0]),(world_coords[1] - world_coords[0]));
-        n.normalize();
-        float intensity = n * light_dir;
-        //±³Ãæ²Ã¼ô
-        if (intensity > 0) {
-            triangle(screen_coords, zbuffer, image, TGAColor(intensity * 255, intensity * 255, intensity * 255, 255));
+
+        t_normal = getTriangleNormal(t_world_coords);
+
+        float t_intensity = t_normal * light_dir;
+        if (t_intensity > 0) {
+            //å¦‚æœå°äº0å°±çœ‹ä¸è§ï¼Œä»£è¡¨å…‰çº¿åœ¨ä¸‰è§’å½¢çš„èƒŒé¢ã€‚
+            TGAColor t_color = TGAColor(t_intensity * 255, t_intensity * 255, t_intensity * 255, 255);
+            write_triangle(t_screen_coords, zBuffer, image, t_color);
         }
     }
+
 
     image.flip_vertically();
     image.write_tga_file("output.tga");
     delete model;
     return 0;
 }
-
